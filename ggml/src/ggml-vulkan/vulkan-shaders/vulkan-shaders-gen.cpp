@@ -196,8 +196,8 @@ static uint32_t compile_count = 0;
 static std::mutex compile_count_mutex;
 static std::condition_variable compile_count_cond;
 
-void string_to_spv_func(const std::string& _name, const std::string& in_fname, const std::map<std::string, std::string>& defines, bool fp16 = true) {
-    std::string name = _name + (fp16 ? "" : "_fp32");
+void string_to_spv_func(const std::string& _name, const std::string& in_fname, const std::map<std::string, std::string>& defines, const std::string& suffix) {
+    std::string name = _name + suffix;
     std::string out_fname = join_paths(output_dir, name + ".spv");
     std::string in_path = join_paths(input_dir, in_fname);
 
@@ -254,7 +254,7 @@ std::map<std::string, std::string> merge_maps(const std::map<std::string, std::s
 }
 
 static std::vector<std::future<void>> compiles;
-void string_to_spv(const std::string& _name, const std::string& in_fname, const std::map<std::string, std::string>& defines, bool fp16 = true) {
+void string_to_spv(const std::string& _name, const std::string& in_fname, const std::map<std::string, std::string>& defines, const std::string& suffix = "") {
     {
         // wait until fewer than N compiles are in progress.
         // 16 is an arbitrary limit, the goal is to avoid "failed to create pipe" errors.
@@ -265,16 +265,17 @@ void string_to_spv(const std::string& _name, const std::string& in_fname, const 
         }
         compile_count++;
     }
-    compiles.push_back(std::async(string_to_spv_func, _name, in_fname, defines, fp16));
+    compiles.push_back(std::async(string_to_spv_func, _name, in_fname, defines, suffix));
 }
 
-void matmul_shaders(bool fp16, bool matmul_id) {
+void matmul_shaders(bool fp16, bool coopmat, bool matmul_id) {
     std::string load_vec = fp16 ? "8" : "4";
     std::string aligned_b_type_f32 = fp16 ? "mat2x4" : "vec4";
     std::string aligned_b_type_f16 = fp16 ? "f16mat2x4" : "f16vec4";
 
     std::map<std::string, std::string> base_dict = {{"FLOAT_TYPE", fp16 ? "float16_t" : "float"}};
     std::string shader_name = "matmul";
+    std::string suffix = "";
 
     if (matmul_id) {
         base_dict["MUL_MAT_ID"] = "1";
@@ -283,14 +284,20 @@ void matmul_shaders(bool fp16, bool matmul_id) {
 
     if (fp16) {
         base_dict["FLOAT16"] = "1";
+    } else {
+        suffix = "_fp32";
+    }
+    if (coopmat) {
+        base_dict["COOPMAT"] = "1";
+        suffix = "_coopmat";
     }
 
     // Shaders with f16 B_TYPE
-    string_to_spv(shader_name + "_f32_f16", "mul_mm.comp", merge_maps(base_dict, {{"DATA_A_F32", "1"}, {"B_TYPE", "float16_t"}, {"D_TYPE", "float"}}), fp16);
-    string_to_spv(shader_name + "_f32_f16_aligned", "mul_mm.comp", merge_maps(base_dict, {{"DATA_A_F32", "1"}, {"LOAD_VEC_A", load_vec}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f16}, {"D_TYPE", "float"}}), fp16);
+    string_to_spv(shader_name + "_f32_f16", "mul_mm.comp", merge_maps(base_dict, {{"DATA_A_F32", "1"}, {"B_TYPE", "float16_t"}, {"D_TYPE", "float"}}), suffix);
+    string_to_spv(shader_name + "_f32_f16_aligned", "mul_mm.comp", merge_maps(base_dict, {{"DATA_A_F32", "1"}, {"LOAD_VEC_A", load_vec}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f16}, {"D_TYPE", "float"}}), suffix);
 
-    string_to_spv(shader_name + "_f16", "mul_mm.comp", merge_maps(base_dict, {{"DATA_A_F16", "1"}, {"B_TYPE", "float16_t"}, {"D_TYPE", "float"}}), fp16);
-    string_to_spv(shader_name + "_f16_aligned", "mul_mm.comp", merge_maps(base_dict, {{"DATA_A_F16", "1"}, {"LOAD_VEC_A", load_vec}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f16}, {"D_TYPE", "float"}}), fp16);
+    string_to_spv(shader_name + "_f16", "mul_mm.comp", merge_maps(base_dict, {{"DATA_A_F16", "1"}, {"B_TYPE", "float16_t"}, {"D_TYPE", "float"}}), suffix);
+    string_to_spv(shader_name + "_f16_aligned", "mul_mm.comp", merge_maps(base_dict, {{"DATA_A_F16", "1"}, {"LOAD_VEC_A", load_vec}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f16}, {"D_TYPE", "float"}}), suffix);
 
     for (const auto& tname : type_names) {
         std::string data_a_key = "DATA_A_" + to_uppercase(tname);
@@ -298,8 +305,8 @@ void matmul_shaders(bool fp16, bool matmul_id) {
         std::string load_vec_a_unaligned = (tname == "f32" || tname == "f16") ? "1" : "2";
         // For aligned matmul loads
         std::string load_vec_a = (tname == "f32" || tname == "f16") ? load_vec : "2";
-        string_to_spv(shader_name + "_" + tname + "_f32", "mul_mm.comp", merge_maps(base_dict, {{data_a_key, "1"}, {"LOAD_VEC_A", load_vec_a_unaligned}, {"B_TYPE", "float"}, {"D_TYPE", "float"}}), fp16);
-        string_to_spv(shader_name + "_" + tname + "_f32_aligned", "mul_mm.comp", merge_maps(base_dict, {{data_a_key, "1"}, {"LOAD_VEC_A", load_vec_a}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f32}, {"D_TYPE", "float"}}), fp16);
+        string_to_spv(shader_name + "_" + tname + "_f32", "mul_mm.comp", merge_maps(base_dict, {{data_a_key, "1"}, {"LOAD_VEC_A", load_vec_a_unaligned}, {"B_TYPE", "float"}, {"D_TYPE", "float"}}), suffix);
+        string_to_spv(shader_name + "_" + tname + "_f32_aligned", "mul_mm.comp", merge_maps(base_dict, {{data_a_key, "1"}, {"LOAD_VEC_A", load_vec_a}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f32}, {"D_TYPE", "float"}}), suffix);
     }
 }
 
@@ -307,9 +314,13 @@ void process_shaders() {
     std::cout << "ggml_vulkan: Generating and compiling shaders to SPIR-V" << std::endl;
     std::map<std::string, std::string> base_dict = {{"FLOAT_TYPE", "float"}};
 
-    for (const auto& fp16 : {false, true}) {
-        matmul_shaders(fp16, false);
-        matmul_shaders(fp16, true);
+    for (const auto& matmul_id : {false, true}) {
+        // Float32
+        matmul_shaders(false, false, matmul_id);
+        // Float16
+        matmul_shaders(true, false, matmul_id);
+        // Float16 CoopMat
+        matmul_shaders(true, true, matmul_id);
     }
 
     for (const auto& tname : type_names) {
