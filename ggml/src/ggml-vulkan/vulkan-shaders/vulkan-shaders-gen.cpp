@@ -58,6 +58,7 @@ const std::vector<std::string> type_names = {
     "iq4_nl"
 };
 
+namespace {
 void execute_command(const std::string& command, std::string& stdout_str, std::string& stderr_str) {
 #ifdef _WIN32
     HANDLE stdout_read, stdout_write;
@@ -268,7 +269,7 @@ void string_to_spv(const std::string& _name, const std::string& in_fname, const 
     compiles.push_back(std::async(string_to_spv_func, _name, in_fname, defines, suffix));
 }
 
-void matmul_shaders(bool fp16, bool coopmat, bool matmul_id) {
+void matmul_shaders(bool fp16, bool matmul_id, bool coopmat, bool f16acc) {
     std::string load_vec = fp16 ? "8" : "4";
     std::string aligned_b_type_f32 = fp16 ? "mat2x4" : "vec4";
     std::string aligned_b_type_f16 = fp16 ? "f16mat2x4" : "f16vec4";
@@ -285,11 +286,19 @@ void matmul_shaders(bool fp16, bool coopmat, bool matmul_id) {
     if (fp16) {
         base_dict["FLOAT16"] = "1";
     } else {
-        suffix = "_fp32";
+        suffix += "_fp32";
     }
+
+    base_dict["ACC_TYPE"] = f16acc ? "float16_t" : "float";
+    suffix += f16acc ? "_f16acc" : "";
+
+    if (f16acc) {
+        base_dict["ACC_F16"] = "1";
+    }
+
     if (coopmat) {
         base_dict["COOPMAT"] = "1";
-        suffix = "_coopmat";
+        suffix += "_coopmat";
     }
 
     // Shaders with f16 B_TYPE
@@ -314,13 +323,18 @@ void process_shaders() {
     std::cout << "ggml_vulkan: Generating and compiling shaders to SPIR-V" << std::endl;
     std::map<std::string, std::string> base_dict = {{"FLOAT_TYPE", "float"}};
 
-    for (const auto& matmul_id : {false, true}) {
-        // Float32
-        matmul_shaders(false, false, matmul_id);
-        // Float16
-        matmul_shaders(true, false, matmul_id);
-        // Float16 CoopMat
-        matmul_shaders(true, true, matmul_id);
+    for (const auto& fp16 : {false, true}) {
+        for (const auto& matmul_id : {false, true}) {
+            for (const auto& coopmat : {false, true}) {
+                for (const auto& f16acc : {false, true}) {
+                    if ((!fp16 && coopmat) || (!fp16 && f16acc)) {
+                        continue;
+                    }
+
+                    matmul_shaders(fp16, matmul_id, coopmat, f16acc);
+                }
+            }
+        }
     }
 
     for (const auto& tname : type_names) {
@@ -481,6 +495,7 @@ void write_output_files() {
 
     fclose(hdr);
     fclose(src);
+}
 }
 
 int main(int argc, char** argv) {
