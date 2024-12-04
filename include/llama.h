@@ -4,7 +4,9 @@
 #include "ggml.h"
 #include "ggml-cpu.h"
 #include "ggml-backend.h"
+#ifdef __cplusplus
 #include "ggml-cpp.h"
+#endif
 #include "ggml-metal.h"
 
 #include <stddef.h>
