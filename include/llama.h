@@ -4,6 +4,8 @@
 #include "ggml.h"
 #include "ggml-cpu.h"
 #include "ggml-backend.h"
+#include "ggml-cpp.h"
+#include "ggml-metal.h"
 
 #include <stddef.h>
 #include <stdint.h>
