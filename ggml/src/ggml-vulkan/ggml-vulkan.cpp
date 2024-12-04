@@ -1718,12 +1718,14 @@ static vk_device ggml_vk_get_device(size_t idx) {
         vk::PhysicalDeviceMaintenance3Properties props3;
         vk::PhysicalDeviceMaintenance4Properties props4;
         vk::PhysicalDeviceSubgroupProperties subgroup_props;
+        vk::PhysicalDeviceDriverProperties driver_props;
         vk::PhysicalDeviceShaderSMBuiltinsPropertiesNV sm_props;
         vk::PhysicalDeviceShaderCoreProperties2AMD amd_shader_core_properties2_props;
         props2.pNext = &props3;
         props3.pNext = &subgroup_props;
+        subgroup_props.pNext = &driver_props;
 
-        VkBaseOutStructure * last_struct = (VkBaseOutStructure *)&subgroup_props;
+        VkBaseOutStructure * last_struct = (VkBaseOutStructure *)&driver_props;
 
         if (maintenance4_support) {
             last_struct->pNext = (VkBaseOutStructure *)&props4;
@@ -1789,8 +1791,9 @@ static vk_device ggml_vk_get_device(size_t idx) {
 
         device->fp16 = !force_disable_f16 && fp16_storage && fp16_compute;
 
-        if (device->vendor_id == VK_VENDOR_ID_INTEL) {
+        if (device->vendor_id == VK_VENDOR_ID_INTEL || (props2.properties.vendorID == VK_VENDOR_ID_AMD && driver_props.driverID == vk::DriverId::eAmdProprietary)) {
             // Intel drivers don't support coopmat properly yet
+            // Only RADV supports coopmat properly on AMD
             device->coopmat_support = false;
         }
 
@@ -2060,8 +2063,9 @@ static void ggml_vk_print_gpu_info(size_t idx) {
         }
     }
 
-    if (props2.properties.vendorID == VK_VENDOR_ID_INTEL) {
+    if (props2.properties.vendorID == VK_VENDOR_ID_INTEL || (props2.properties.vendorID == VK_VENDOR_ID_AMD && driver_props.driverID == vk::DriverId::eAmdProprietary)) {
         // Intel drivers don't support coopmat properly yet
+        // Only RADV supports coopmat properly on AMD
         coopmat_support = false;
     }
 
